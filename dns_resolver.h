@@ -5,11 +5,7 @@
 #include<arpa/inet.h>
 #include<netinet/in.h>
 #include<unistd.h>
- 
-// DNS resource records
-#define T_A 1   // Ipv4 address
-#define T_NS 2  // Nameserver
- 
+  
 // DNS Header Struct
 struct HEADER
 {
@@ -67,13 +63,24 @@ typedef struct
   struct QUESTION *ques;
 } QUERY;
 
+// constants for DNS record types
+#define TYPE_A 1   // Ipv4 address
+#define TYPE_NS 2  // Nameserver
+
+// global variables
+char dns_servers[10][100];  // to store the next server IPs to query
+int answer_found;     // flag to stop once an answer is found
+
 // function prototypes
-void dnsquery(unsigned char*);
+void dnsQuery(unsigned char*);
 void getDnsFormat(unsigned char*,unsigned char*);
 unsigned char* getName(unsigned char*,unsigned char*,int*);
 void setHeader(struct HEADER *dns);
 void receivePacket(int sockfd, char* buffer, struct sockaddr_in dest_address);
 void sendPacket(int sockfd, char* buffer, unsigned char *query_name, struct sockaddr_in dest_address);
-void print_details(struct HEADER *);
-void readQueryAnswer(int stop, struct HEADER *dns, unsigned char* buffer, unsigned char *query_index, struct RES_RECORD answ_records[]);
+void printDetails(struct HEADER *);
+void printAnswers(struct HEADER *dns, struct RES_RECORD answ_records[], struct sockaddr_in src_address);
+void printAuth(struct HEADER *dns, struct RES_RECORD auth_records[]);
+void printAddi(struct HEADER *dns, struct RES_RECORD addi_records[], struct sockaddr_in src_address);
+void saveInterServers(struct HEADER *dns, struct RES_RECORD addi_records[], struct sockaddr_in src_address);
 

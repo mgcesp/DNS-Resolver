@@ -1,44 +1,36 @@
 #include "dns_resolver.h"
 
-// to store the next server IPs to query
-char next_servers[10][100];
-
-// flag to stop once an answer is found
-int answer_found;
-
 int main(int argc, char *argv[])
 {
     unsigned char domain_name[100];
 
     // get root DNS server from argv
-    strcpy(next_servers[0] , argv[1]);
+    strcpy(dns_servers[0] , argv[1]);
 
     // get the domain_name from argv; memcpy is best way for unsigned char
     memcpy(&domain_name, argv[2], strlen(argv[2]) + 1);
 
     printf("\n______________________________________________________________\n");
     printf("DOMAIN NAME : %s\n", domain_name);
-    printf("DNS ROOT SERVER IP : %s\n", next_servers[0]);
+    printf("DNS ROOT SERVER IP : %s\n", dns_servers[0]);
     printf("--------------------------------------------------\n");
 
     // while no answer record is fetched keep searching
     while(!answer_found)
     {
         // print DNS server that is being queried
-        printf("DNS server to query: %s\n", next_servers[0]);
+        printf("DNS server to query: %s\n", dns_servers[0]);
         // run a DNS query on domain name
-        dnsquery(domain_name);
+        dnsQuery(domain_name);
     }
  
     return 0;
 }
 
-// runs a DNS query on the domain_name using first IP in next_servers[]
-void dnsquery(unsigned char *domain_name)
+// runs a DNS query on the domain_name using first IP in dns_servers[]
+void dnsQuery(unsigned char *domain_name)
 {
-    int query_type = T_A; // 1
-
-    unsigned char buffer[70000];
+    unsigned char buffer[10000];
     unsigned char *query_name;
     unsigned char *query_index;
 
@@ -50,27 +42,25 @@ void dnsquery(unsigned char *domain_name)
     struct sockaddr_in src_address;
     struct sockaddr_in dest_address;
  
-    // the replies from the DNS server
+    // to store records received from server
     struct RES_RECORD answ_records[20];
     struct RES_RECORD auth_records[20];
     struct RES_RECORD addi_records[20]; 
  
     struct HEADER *dns = NULL;
     struct QUESTION *query_info = NULL;
- 
-    // printf("Resolving %s" , domain_name);
 
-    // CREATE UDP SOCKET
+    /*** CREATE UDP SOCKET  **************************************************/
     sockfd = socket(AF_INET , SOCK_DGRAM , IPPROTO_UDP); 
  
     dest_address.sin_family = AF_INET;
     dest_address.sin_port = htons(53);
-    dest_address.sin_addr.s_addr = inet_addr(next_servers[0]); // next server to query
+    dest_address.sin_addr.s_addr = inet_addr(dns_servers[0]); // next server to query
  
     // prepare buffer for HEADER use
     dns = (struct HEADER *)&buffer;
     
-    // set format for DNS message
+    // set flags for DNS message
     setHeader(dns);
  
     // point to the query_name section
@@ -81,7 +71,7 @@ void dnsquery(unsigned char *domain_name)
 
     // allocate query_info for the QUESTION section of message
     query_info = (struct QUESTION*)&buffer[sizeof(struct HEADER) + (strlen((const char*)query_name) + 1)];
-    query_info->qtype = htons(query_type); 
+    query_info->qtype = htons(TYPE_A); 
     query_info->qclass = htons(1);
  
     // SEND PACKET
@@ -91,7 +81,7 @@ void dnsquery(unsigned char *domain_name)
     receivePacket(sockfd, (char*)buffer, dest_address);
 
     // print details from response
-    print_details(dns);
+    printDetails(dns);
 
     // point back to beginning
     dns = (struct HEADER*) buffer;
@@ -99,7 +89,7 @@ void dnsquery(unsigned char *domain_name)
     // move ahead of the dns header and the query field
     query_index = &buffer[sizeof(struct HEADER) + (strlen((const char*)query_name)+1) + sizeof(struct QUESTION)];
  
-    // READ ANSWER SECTION
+    /*** READ ANSWER SECTION  **************************************************/
     last_position = 0;
 
     // if the query has an answer
@@ -116,7 +106,7 @@ void dnsquery(unsigned char *domain_name)
         answ_records[i].resource = (struct R_DATA*)(query_index);
         query_index = query_index + sizeof(struct R_DATA);
  
-        if(ntohs(answ_records[i].resource->type) == 1) //if its an ipv4 address
+        if(ntohs(answ_records[i].resource->type) == TYPE_A) 
         {
             answ_records[i].rdata = (unsigned char*)malloc(ntohs(answ_records[i].resource->data_len));
  
@@ -135,8 +125,8 @@ void dnsquery(unsigned char *domain_name)
             query_index = query_index + last_position;
         }
     }
- 
-    // READ AUTHORITATIVE SECTION
+    
+    /*** READ AUTHORITATIVE SECTION  **************************************************/
     for(i = 0; i < ntohs(dns->auth_count); i++)
     {
         auth_records[i].name = getName(query_index, buffer, &last_position);
@@ -149,7 +139,7 @@ void dnsquery(unsigned char *domain_name)
         query_index += last_position;
     }
  
-    // READ ADDITIONAL SECTION
+    /*** READ ADDITIONAL SECTION  **************************************************/
     for(i = 0; i < ntohs(dns->add_count); i++)
     {
         addi_records[i].name = getName(query_index, buffer, &last_position);
@@ -158,7 +148,7 @@ void dnsquery(unsigned char *domain_name)
         addi_records[i].resource = (struct R_DATA*)(query_index);
         query_index += sizeof(struct R_DATA);
  
-        if(ntohs(addi_records[i].resource->type) == 1)
+        if(ntohs(addi_records[i].resource->type) == TYPE_A)
         {
             addi_records[i].rdata = (unsigned char*)malloc(ntohs(addi_records[i].resource->data_len));
             
@@ -176,185 +166,97 @@ void dnsquery(unsigned char *domain_name)
             query_index += last_position;
         }
     }
- 
-    // print answ_records
-    printf("\nAnswers Section:\n");
 
-    for(i = 0 ; i < ntohs(dns->ans_count) ; i++)
-    {
-        printf("Name : %s   ",answ_records[i].name);
- 
-        if( ntohs(answ_records[i].resource->type) == T_A) //IPv4 address
-        {
-            long *p;
-            p=(long*)answ_records[i].rdata;
-            src_address.sin_addr.s_addr = (*p); //working without ntohl
-            printf("IP : %s",inet_ntoa(src_address.sin_addr));
-        }
- 
-        printf("\n");
-    }
- 
-    // print authorities
-    printf("\nAuthoritive Section:\n");
+    printAnswers(dns, answ_records, src_address);
+  
+    printAuth(dns, auth_records);
 
-    for(i = 0; i < ntohs(dns->auth_count); i++)
-    {
-        printf("Name : %s   ",auth_records[i].name);
-        if(ntohs(auth_records[i].resource->type) == T_NS)
-        {
-            printf("Name Server : %s",auth_records[i].rdata);
-        }
-        printf("\n");
-    }
- 
-    // print additional resource records
-    printf("\nAdditional Information Section:\n");
+    printAddi(dns, addi_records, src_address);
 
-    for(i = 0; i < ntohs(dns->add_count); i++)
-    {
-        printf("Name : %s   ",addi_records[i].name);
-        if(ntohs(addi_records[i].resource->type) == T_A)
-        {
-            long *p;
-            p=(long*)addi_records[i].rdata;
-            src_address.sin_addr.s_addr=(*p);
-            printf("IP : %s",inet_ntoa(src_address.sin_addr));
-
-            // STORE
-            strcpy(next_servers[i], inet_ntoa(src_address.sin_addr));
-            
-        }
-        printf("\n");
-    }
+    saveInterServers(dns, addi_records, src_address);
 
     printf("--------------------------------------------------\n");
     return;
 }
 
-// converts domain_name to DNS format
-// ex: cs.fiu.edu => 2cs.3fiu.3edu
-void getDnsFormat(unsigned char* dns,unsigned char* domain_name) 
+// saves the IPs for itermediate servers
+void saveInterServers(struct HEADER *dns, struct RES_RECORD addi_records[], struct sockaddr_in src_address)
 {
-    int lock = 0 , i;
-    strcat((char*)domain_name,".");
-     
-    for(i = 0 ; i < strlen((char*)domain_name) ; i++) 
+    int i;
+
+    for(i = 0; i < ntohs(dns->add_count); i++)
     {
-        if(domain_name[i]=='.') 
+        if(ntohs(addi_records[i].resource->type) == TYPE_A)
         {
-            *dns++ = i-lock;
-            for(;lock<i;lock++) 
-            {
-                *dns++= domain_name[lock];
-            }
-            lock++; //or lock=i+1;
+            long *p;
+            p=(long*)addi_records[i].rdata;
+            src_address.sin_addr.s_addr=(*p);
+
+            // save into dns_servers[]
+            strcpy(dns_servers[i], inet_ntoa(src_address.sin_addr));
         }
     }
-    *dns++ = '\0';
 }
 
-// read domain name from query_index into buffer
-unsigned char* getName(unsigned char* query_index, unsigned char* buffer, int* count)
+// prints additional records
+void printAddi(struct HEADER *dns, struct RES_RECORD addi_records[], struct sockaddr_in src_address)
 {
-    unsigned char *name;
-    unsigned int p = 0;
-    unsigned int jumped = 0;
-    unsigned int offset;
+    printf("\nAdditional Information Section:\n");
 
-    int i , j;
+    int i;
 
-    // mask for leading bits
-    int bitMask = 49152; // 49152 = 1100 0000 0000 0000
-
-    *count = 1;
-    name = (unsigned char*)malloc(256);
- 
-    name[0]='\0';
- 
-    // read the names in DNS format; 3www6google3com
-    while(*query_index!=0)
+    for(i = 0; i < ntohs(dns->add_count); i++)
     {
-        if(*query_index>=192)
+        printf("Name : %s   ",addi_records[i].name);
+        if(ntohs(addi_records[i].resource->type) == TYPE_A)
         {
-            offset = (*query_index)*256 + *(query_index+1) - bitMask; 
-            query_index = buffer + offset - 1;
-            jumped = 1; //we have jumped to another location so counting wont go up!
+            long *p;
+            p=(long*)addi_records[i].rdata;
+            src_address.sin_addr.s_addr=(*p);
+            printf("IP : %s",inet_ntoa(src_address.sin_addr));            
         }
-        else
-        {
-            name[p++]=*query_index;
-        }
- 
-        query_index = query_index+1;
- 
-        if(jumped==0)
-        {
-            *count = *count + 1; //if we havent jumped to another location then we can count up
-        }
+        printf("\n");
     }
-    // add null character to create string
-    name[p]='\0';
-
-    if(jumped == 1)
-    {
-        // number of steps we actually moved forward in the packet
-        *count = *count + 1; 
-    }
- 
-    // convert to human format: 3www6google3com0 to www.google.com
-    for(i = 0; i<(int)strlen((const char*)name); i++) 
-    {
-        p=name[i];
-        for(j = 0;j<(int)p;j++) 
-        {
-            name[i]=name[i+1];
-            i=i+1;
-        }
-        name[i]='.';
-    }
-    // remove last dot
-    name[i-1]='\0';
-    return name;
 }
 
-// function to read query; NOT USED
-void readQueryAnswer(int position, struct HEADER *dns, unsigned char* buffer, unsigned char *query_index, struct RES_RECORD answ_records[])
+// prints authoritive records
+void printAuth(struct HEADER *dns, struct RES_RECORD auth_records[])
 {
-    int i, j;
+    printf("\nAuthoritive Section:\n");
 
-    // if the query has an answer
-    if (ntohs(dns->ans_count) >= 1)
+    int i;
+
+    for(i = 0; i < ntohs(dns->auth_count); i++)
     {
-        answer_found = 1; // set flag
+        printf("Name : %s   ",auth_records[i].name);
+        if(ntohs(auth_records[i].resource->type) == TYPE_NS)
+        {
+            printf("Name Server : %s",auth_records[i].rdata);
+        }
+        printf("\n");
     }
- 
-    for(i = 0; i < ntohs(dns->ans_count); i++)
+}
+
+// prints answer records
+void printAnswers(struct HEADER *dns, struct RES_RECORD answ_records[], struct sockaddr_in src_address)
+{
+    printf("\nAnswers Section:\n");
+
+    int i;
+
+    for(i = 0 ; i < ntohs(dns->ans_count) ; i++)
     {
-        answ_records[i].name = getName(query_index,buffer,&position);
-        query_index = query_index + position;
+        printf("Name : %s   ",answ_records[i].name);
  
-        answ_records[i].resource = (struct R_DATA*)(query_index);
-        query_index = query_index + sizeof(struct R_DATA);
- 
-        if(ntohs(answ_records[i].resource->type) == 1) //if its an ipv4 address
+        if( ntohs(answ_records[i].resource->type) == TYPE_A)
         {
-            answ_records[i].rdata = (unsigned char*)malloc(ntohs(answ_records[i].resource->data_len));
- 
-            for(j = 0 ; j<ntohs(answ_records[i].resource->data_len) ; j++)
-            {
-                answ_records[i].rdata[j] = query_index[j];
-            }
- 
-            answ_records[i].rdata[ntohs(answ_records[i].resource->data_len)] = '\0';
- 
-            query_index = query_index + ntohs(answ_records[i].resource->data_len);
+            long *p;
+            p=(long*)answ_records[i].rdata;
+            src_address.sin_addr.s_addr = (*p);
+            printf("IP : %s",inet_ntoa(src_address.sin_addr));
         }
-        else
-        {
-            answ_records[i].rdata = getName(query_index,buffer,&position);
-            query_index = query_index + position;
-        }
+ 
+        printf("\n");
     }
 }
 
@@ -369,21 +271,11 @@ void sendPacket(int sockfd, char* buffer, unsigned char *query_name, struct sock
 void receivePacket(int sockfd, char* buffer, struct sockaddr_in dest_address)
 {
     int i = sizeof(dest_address);
-    // printf("\nReceiving answer...");
-    if(recvfrom (sockfd, buffer , 70000 , 0 , (struct sockaddr*)&dest_address , (socklen_t*)&i ) < 0)
+
+    if(recvfrom (sockfd, buffer, 10000, 0, (struct sockaddr*)&dest_address, (socklen_t*) &i) < 0)
     {
         perror("recvfrom failed");
     }
-}
-
-//  helper to print HEADER details
-void print_details(struct HEADER *dns)
-{
-    printf("\nReply received. Content overview: ");
-    // printf("\n %d Questions.", ntohs(dns->q_count));
-    printf("\n %d Answers.", ntohs(dns->ans_count));
-    printf("\n %d Intermidiate Name Servers.", ntohs(dns->auth_count));
-    printf("\n %d Additional Information Records.\n", ntohs(dns->add_count));
 }
 
 // set DNS message format
@@ -404,4 +296,99 @@ void setHeader(struct HEADER *dns)
     dns->ans_count = 0;
     dns->auth_count = 0;
     dns->add_count = 0;
+}
+
+// converts domain_name to DNS format
+// ex: cs.fiu.edu => 2cs.3fiu.3edu
+void getDnsFormat(unsigned char* dns,unsigned char* domain_name) 
+{
+    int lock = 0 , i;
+    strcat((char*)domain_name,".");
+     
+    for(i = 0 ; i < strlen((char*)domain_name) ; i++) 
+    {
+        if(domain_name[i]=='.') 
+        {
+            *dns++ = i-lock;
+            for(;lock<i;lock++) 
+            {
+                *dns++= domain_name[lock];
+            }
+            lock=i+1;
+        }
+    }
+    *dns++ = '\0';
+}
+
+// read domain name from query_index into buffer
+unsigned char* getName(unsigned char* query_index, unsigned char* buffer, int* count)
+{
+    unsigned char *name;
+    unsigned int p = 0;
+    unsigned int jumped = 0;
+    unsigned int offset;
+
+    int i , j;
+
+    // mask for leading two bits
+    int bitMask = 49152; // 1100 0000 0000 0000
+
+    *count = 1;
+    name = (unsigned char*)malloc(256);
+ 
+    name[0]='\0';
+ 
+    // read the names in DNS format
+    while(*query_index!=0)
+    {
+        if(*query_index >= 192)
+        {
+            offset = (*query_index)*256 + *(query_index+1) - bitMask; 
+            query_index = buffer + offset - 1;
+            jumped = 1; //we have jumped to another location so counting wont go up!
+        }
+        else
+        {
+            name[p++] =* query_index;
+        }
+ 
+        query_index = query_index+1;
+ 
+        if(jumped == 0)
+        {
+            *count = *count + 1; // incrememt count
+        }
+    }
+    // add null character to create string
+    name[p]='\0';
+
+    if(jumped == 1)
+    {
+        // move one bit forward
+        *count = *count + 1; 
+    }
+ 
+    // convert to human format
+    for(i = 0; i<(int)strlen((const char*)name); i++) 
+    {
+        p=name[i];
+        for(j = 0;j<(int)p;j++) 
+        {
+            name[i]=name[i+1];
+            i=i+1;
+        }
+        name[i]='.';
+    }
+    // remove last dot
+    name[i-1]='\0';
+    return name;
+}
+
+//  helper to print HEADER details
+void printDetails(struct HEADER *dns)
+{
+    printf("\nReply received. Content overview: ");
+    printf("\n %d Answers.", ntohs(dns->ans_count));
+    printf("\n %d Intermidiate Name Servers.", ntohs(dns->auth_count));
+    printf("\n %d Additional Information Records.\n", ntohs(dns->add_count));
 }
