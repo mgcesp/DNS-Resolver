@@ -179,7 +179,7 @@ void dnsQuery(unsigned char *domain_name)
     return;
 }
 
-// saves the IPs for itermediate servers
+// extracts and saves the IPs of the itermediate servers
 void saveInterServers(struct HEADER *dns, struct RES_RECORD addi_records[], struct sockaddr_in src_address)
 {
     int i;
